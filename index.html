@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>进货比价 · 日元转人民币</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Newsreader:opsz,wght@6..72,500;6..72,650&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">比</span>
+        <div>
+          <h1>进货比价</h1>
+          <p>AmiAmi · Sootang · AniSmile · 线下</p>
+        </div>
+      </div>
+      <div class="rate-box">
+        <label for="rate">日元汇率</label>
+        <div class="rate-row">
+          <span>1 日元 =</span>
+          <input id="rate" type="number" inputmode="decimal" min="0.0001" step="0.0001" />
+          <span>人民币</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="calc-card" aria-labelledby="calc-title">
+      <div class="section-head">
+        <div>
+          <h2 id="calc-title">快速试算</h2>
+          <p>输入各渠道日元标价，运费会自动计入 AmiAmi / AniSmile。</p>
+        </div>
+        <button type="button" class="ghost-btn" id="save-calc">存入商品库</button>
+      </div>
+      <div class="calc-grid" id="calc-grid"></div>
+      <p class="calc-hint" id="calc-hint">至少填写一个渠道价格后，会立刻换算人民币并标出推荐。</p>
+    </section>
+
+    <section class="library" aria-labelledby="library-title">
+      <div class="section-head">
+        <div>
+          <h2 id="library-title">商品库</h2>
+          <p id="library-count">还没有商品，先试算一组价格再保存。</p>
+        </div>
+        <div class="library-actions">
+          <input id="search" type="search" placeholder="搜索商品名或备注" />
+          <button type="button" class="primary-btn" id="add-product">添加商品</button>
+        </div>
+      </div>
+      <div class="product-list" id="product-list"></div>
+    </section>
+  </div>
+
+  <dialog class="modal" id="product-modal">
+    <form id="product-form" method="dialog">
+      <header>
+        <h3 id="modal-title">添加商品</h3>
+        <button type="button" class="icon-btn" id="close-modal" aria-label="关闭">×</button>
+      </header>
+      <div class="form-body">
+        <label class="full">
+          商品名称
+          <input name="name" required maxlength="80" placeholder="例如：某手办 / 某周边" />
+        </label>
+        <label>
+          AmiAmi（日元）
+          <input name="amiami" type="number" min="0" step="1" placeholder="不含运费" />
+        </label>
+        <label>
+          Sootang（日元）
+          <input name="sootang" type="number" min="0" step="1" placeholder="日元标价" />
+        </label>
+        <label>
+          AniSmile（日元）
+          <input name="anismile" type="number" min="0" step="1" placeholder="不含运费" />
+        </label>
+        <label>
+          线下（日元）
+          <input name="offline" type="number" min="0" step="1" placeholder="日元标价" />
+        </label>
+        <label class="full">
+          备注
+          <input name="note" maxlength="120" placeholder="规格、店铺、到货时间等" />
+        </label>
+        <div class="full photo-field">
+          <span>商品照片</span>
+          <div class="photo-picker" id="photo-picker">
+            <img id="photo-preview" alt="商品预览" hidden />
+            <p class="photo-empty" id="photo-empty">点击上传照片，手机可直接拍照</p>
+            <input id="photo-input" type="file" accept="image/*" />
+          </div>
+          <button type="button" class="text-btn" id="remove-photo" hidden>移除照片</button>
+        </div>
+      </div>
+      <footer>
+        <p class="form-tip">AmiAmi、AniSmile 会自动加 630 日元运费后再比价。</p>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="cancel-modal">取消</button>
+          <button type="submit" class="primary-btn">保存</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog class="lightbox" id="lightbox" aria-label="查看商品照片">
+    <img id="lightbox-image" alt="商品照片" />
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
