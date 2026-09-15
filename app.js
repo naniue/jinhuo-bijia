@@ -1,6 +1,7 @@
 const STORAGE_KEY = "purchase-price-app-v1";
 const PHOTO_DB = "purchase-price-photos";
 const PHOTO_STORE = "photos";
+const PAGE_SIZE = 12;
 const CHANNELS = [
   { id: "amiami", name: "AmiAmi", shipping: 630 },
   { id: "sootang", name: "Sootang", shipping: 0 },
@@ -14,9 +15,11 @@ const els = {
   calcHint: document.getElementById("calc-hint"),
   saveCalc: document.getElementById("save-calc"),
   search: document.getElementById("search"),
+  sort: document.getElementById("sort"),
+  resultLabel: document.getElementById("result-label"),
   addProduct: document.getElementById("add-product"),
   productList: document.getElementById("product-list"),
-  libraryCount: document.getElementById("library-count"),
+  pager: document.getElementById("pager"),
   modal: document.getElementById("product-modal"),
   form: document.getElementById("product-form"),
   modalTitle: document.getElementById("modal-title"),
@@ -29,6 +32,7 @@ const els = {
   removePhoto: document.getElementById("remove-photo"),
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightbox-image"),
+  toast: document.getElementById("toast"),
 };
 
 const state = loadState();
@@ -36,6 +40,7 @@ const photoCache = new Map();
 let editingId = null;
 let draftPhoto = null;
 let photoDirty = false;
+let currentPage = 1;
 const calcCards = {};
 
 function defaultState() {
@@ -46,6 +51,7 @@ function defaultState() {
         id: crypto.randomUUID(),
         name: "示例：某比例手办",
         note: "可删除，仅用于演示比价",
+        createdAt: Date.now(),
         amiami: 12800,
         sootang: 14200,
         anismile: 12500,
@@ -117,7 +123,7 @@ function toNumber(value) {
 }
 
 function formatYen(value) {
-  return `¥${Math.round(value).toLocaleString("ja-JP")}`;
+  return `${Math.round(value).toLocaleString("ja-JP")}円`;
 }
 
 function formatCny(value) {
@@ -148,49 +154,47 @@ function bestChannelId(quotes) {
   ).id;
 }
 
+function bestQuote(product, rate) {
+  const quotes = quotesFromProduct(product, rate);
+  return quotes.find((item) => item.id === bestChannelId(quotes)) || null;
+}
+
 function yenLine(quote) {
   if (!quote) return "暂无标价";
   if (quote.shipping) {
-    return `${formatYen(quote.price)} + ${formatYen(quote.shipping)} = ${formatYen(quote.yenTotal)}`;
+    return `${formatYen(quote.price)} + ${formatYen(quote.shipping)}`;
   }
-  return `标价 ${formatYen(quote.price)}`;
+  return formatYen(quote.price);
 }
 
-function fillChannelCard(card, channel, quote, bestId) {
+function showToast(message) {
+  els.toast.textContent = message;
+  els.toast.hidden = false;
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => {
+    els.toast.hidden = true;
+  }, 1800);
+}
+
+function fillCalcCard(card, channel, quote, bestId) {
   const empty = !quote;
-  card.classList.toggle("empty-channel", empty);
   card.classList.toggle("best", Boolean(bestId && channel.id === bestId));
   card.querySelector(".yen").textContent = yenLine(quote);
   card.querySelector(".cny").textContent = empty ? "—" : formatCny(quote.cny);
   card.querySelector(".ship").textContent = channel.shipping
     ? `含运费 ${formatYen(channel.shipping)}`
     : "无额外运费";
-
   let badge = card.querySelector(".badge");
   if (bestId && channel.id === bestId) {
     if (!badge) {
       badge = document.createElement("span");
       badge.className = "badge";
       badge.textContent = "推荐";
-      card.appendChild(badge);
+      card.querySelector(".name").appendChild(badge);
     }
   } else if (badge) {
     badge.remove();
   }
-}
-
-function createChannelCard(channel, quote, bestId, options = {}) {
-  const card = document.createElement("article");
-  card.className = `channel-card ${channel.id}`;
-  card.innerHTML = `
-    <p class="name">${channel.name}</p>
-    ${options.editable ? `<input type="number" min="0" step="1" placeholder="日元标价" />` : ""}
-    <p class="yen"></p>
-    <p class="cny"></p>
-    <p class="ship"></p>
-  `;
-  fillChannelCard(card, channel, quote, bestId);
-  return card;
 }
 
 function currentCalcProduct() {
@@ -202,7 +206,15 @@ function currentCalcProduct() {
 function buildCalc() {
   els.calcGrid.innerHTML = "";
   CHANNELS.forEach((channel) => {
-    const card = createChannelCard(channel, null, null, { editable: true });
+    const card = document.createElement("article");
+    card.className = `calc-card ${channel.id}`;
+    card.innerHTML = `
+      <p class="name">${channel.name}</p>
+      <input type="number" min="0" step="1" placeholder="日元标价" />
+      <p class="yen"></p>
+      <p class="cny"></p>
+      <p class="ship"></p>
+    `;
     const input = card.querySelector("input");
     input.addEventListener("input", updateCalc);
     calcCards[channel.id] = { card, input };
@@ -215,11 +227,7 @@ function updateCalc() {
   const rate = Number(els.rate.value) || 0;
   const quotes = quotesFromProduct(currentCalcProduct(), rate);
   const bestId = bestChannelId(quotes);
-
-  quotes.forEach((item) => {
-    fillChannelCard(calcCards[item.id].card, item, item.quote, bestId);
-  });
-
+  quotes.forEach((item) => fillCalcCard(calcCards[item.id].card, item, item.quote, bestId));
   const best = quotes.find((item) => item.id === bestId);
   els.calcHint.textContent = best
     ? `当前推荐 ${best.name}，到货成本约 ${formatCny(best.quote.cny)}。`
@@ -234,7 +242,7 @@ function showPhotoPreview(dataUrl) {
   els.photoPreview.src = dataUrl || "";
 }
 
-function renderLibrary() {
+function filteredProducts() {
   const keyword = els.search.value.trim().toLowerCase();
   const rate = Number(els.rate.value) || 0;
   const products = state.products.filter((product) => {
@@ -242,54 +250,115 @@ function renderLibrary() {
     return haystack.includes(keyword);
   });
 
-  els.libraryCount.textContent = state.products.length
-    ? `共 ${state.products.length} 件商品，按人民币到货成本比价。`
-    : "还没有商品，先试算一组价格再保存。";
+  products.sort((a, b) => {
+    if (els.sort.value === "name") return a.name.localeCompare(b.name, "zh");
+    if (els.sort.value === "newest") return (b.createdAt || 0) - (a.createdAt || 0);
+    const aBest = bestQuote(a, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
+    const bBest = bestQuote(b, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
+    return aBest - bBest;
+  });
+  return products;
+}
+
+function renderPager(totalPages) {
+  els.pager.innerHTML = "";
+  if (totalPages <= 1) {
+    els.pager.hidden = true;
+    return;
+  }
+  els.pager.hidden = false;
+  for (let page = 1; page <= totalPages; page += 1) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `page-btn${page === currentPage ? " current" : ""}`;
+    button.textContent = String(page);
+    button.addEventListener("click", () => {
+      currentPage = page;
+      renderLibrary();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    els.pager.appendChild(button);
+  }
+  if (currentPage < totalPages) {
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "page-btn next";
+    next.textContent = "次へ >";
+    next.addEventListener("click", () => {
+      currentPage += 1;
+      renderLibrary();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    els.pager.appendChild(next);
+  }
+}
+
+function renderLibrary() {
+  const keyword = els.search.value.trim();
+  const rate = Number(els.rate.value) || 0;
+  const products = filteredProducts();
+  const totalPages = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
+  currentPage = Math.min(currentPage, totalPages);
+  const pageItems = products.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  els.resultLabel.textContent = keyword
+    ? `「${keyword}」の検索結果(${products.length}件)`
+    : `「全部」の検索結果(${state.products.length}件)`;
 
   els.productList.innerHTML = "";
-  if (!products.length) {
+  if (!pageItems.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = keyword ? "没有找到匹配的商品。" : "商品库是空的。";
+    empty.textContent = keyword ? "没有找到匹配的商品。" : "还没有商品。";
     els.productList.appendChild(empty);
+    renderPager(0);
     return;
   }
 
-  products.forEach((product) => {
+  pageItems.forEach((product) => {
     const quotes = quotesFromProduct(product, rate);
-    const bestId = bestChannelId(quotes);
+    const best = quotes.find((item) => item.id === bestChannelId(quotes));
     const card = document.createElement("article");
-    card.className = "product-card";
+    card.className = "item";
     card.innerHTML = `
-      <div class="product-top">
-        <div class="product-identity">
-          <button type="button" class="product-photo" data-photo hidden>
-            <img alt="${escapeHtml(product.name)}" />
-          </button>
-          <div>
-            <h3>${escapeHtml(product.name)}</h3>
-            <p class="note">${escapeHtml(product.note || "无备注")}</p>
+      <button type="button" class="item-photo" data-photo>
+        <img alt="${escapeHtml(product.name)}" hidden />
+        <span class="item-photo-empty">NO IMAGE</span>
+      </button>
+      <div class="item-body">
+        <div class="item-head">
+          <span class="tag${best ? " best" : ""}">${best ? `推荐 ${best.name}` : "未比价"}</span>
+          <div class="item-actions">
+            <button type="button" class="text-btn" data-edit>编辑</button>
+            <button type="button" class="text-btn" data-delete>删除</button>
           </div>
         </div>
-        <div class="product-actions">
-          <button type="button" class="text-btn" data-edit>编辑</button>
-          <button type="button" class="text-btn" data-delete>删除</button>
-        </div>
+        <h3>${escapeHtml(product.name)}</h3>
+        ${product.note ? `<p class="item-note">${escapeHtml(product.note)}</p>` : ""}
+        <p class="item-price">
+          <span class="off">${best?.quote.shipping ? "含运费" : "推荐价"}</span>
+          <span class="cny">${best ? formatCny(best.quote.cny) : "—"}</span>
+        </p>
+        <ul class="item-channels"></ul>
       </div>
     `;
 
-    const row = document.createElement("div");
-    row.className = "channel-row";
+    const list = card.querySelector(".item-channels");
     quotes.forEach((item) => {
-      row.appendChild(createChannelCard(item, item.quote, bestId));
+      const row = document.createElement("li");
+      row.className = `${item.id}${item.quote && item.id === best?.id ? " best" : ""}${item.quote ? "" : " empty"}`;
+      row.innerHTML = `<span>${item.name}</span><span>${item.quote ? formatCny(item.quote.cny) : "—"}</span>`;
+      list.appendChild(row);
     });
-    card.appendChild(row);
 
     const photoBtn = card.querySelector("[data-photo]");
+    const img = photoBtn.querySelector("img");
+    const placeholder = photoBtn.querySelector(".item-photo-empty");
     getPhoto(product.id).then((dataUrl) => {
       if (!dataUrl || !photoBtn.isConnected) return;
-      photoBtn.hidden = false;
-      photoBtn.querySelector("img").src = dataUrl;
+      img.src = dataUrl;
+      img.hidden = false;
+      placeholder.hidden = true;
       photoBtn.addEventListener("click", () => openLightbox(dataUrl, product.name));
     });
 
@@ -304,6 +373,8 @@ function renderLibrary() {
 
     els.productList.appendChild(card);
   });
+
+  renderPager(totalPages);
 }
 
 function escapeHtml(value) {
@@ -362,7 +433,7 @@ function readFormProduct() {
 
 function compressImage(file) {
   return new Promise((resolve, reject) => {
-    if (!file.type.startsWith("image/")) {
+    if (!file.type || !file.type.startsWith("image/")) {
       reject(new Error("请选择图片文件"));
       return;
     }
@@ -395,15 +466,23 @@ function compressImage(file) {
   });
 }
 
-async function handlePhotoFile(file) {
+async function handlePhotoFile(file, fromPaste = false) {
   if (!file) return;
   try {
     const dataUrl = await compressImage(file);
     photoDirty = true;
     showPhotoPreview(dataUrl);
+    if (fromPaste) showToast("已粘贴商品照片");
   } catch (error) {
     alert(error.message || "上传照片失败");
   }
+}
+
+function fileFromClipboard(clipboardData) {
+  const items = [...(clipboardData?.items || [])];
+  const imageItem = items.find((item) => item.type.startsWith("image/"));
+  if (imageItem) return imageItem.getAsFile();
+  return [...(clipboardData?.files || [])].find((file) => file.type.startsWith("image/")) || null;
 }
 
 els.rate.value = state.rate;
@@ -417,7 +496,14 @@ els.rate.addEventListener("input", () => {
   renderLibrary();
 });
 
-els.search.addEventListener("input", renderLibrary);
+els.search.addEventListener("input", () => {
+  currentPage = 1;
+  renderLibrary();
+});
+els.sort.addEventListener("change", () => {
+  currentPage = 1;
+  renderLibrary();
+});
 els.addProduct.addEventListener("click", () => openModal());
 els.closeModal.addEventListener("click", closeModal);
 els.cancelModal.addEventListener("click", closeModal);
@@ -451,6 +537,14 @@ els.photoPicker.addEventListener("drop", (event) => {
   handlePhotoFile(event.dataTransfer.files[0]);
 });
 
+document.addEventListener("paste", async (event) => {
+  const file = fileFromClipboard(event.clipboardData);
+  if (!file) return;
+  event.preventDefault();
+  if (!els.modal.open) await openModal();
+  await handlePhotoFile(file, true);
+});
+
 els.saveCalc.addEventListener("click", () => {
   const draft = currentCalcProduct();
   if (!bestChannelId(quotesFromProduct(draft, Number(els.rate.value) || 0))) {
@@ -478,7 +572,7 @@ els.form.addEventListener("submit", async (event) => {
       item.id === editingId ? { ...item, ...draft } : item
     );
   } else {
-    state.products.unshift({ id, ...draft });
+    state.products.unshift({ id, createdAt: Date.now(), ...draft });
   }
 
   if (photoDirty || (!editingId && draftPhoto)) {
