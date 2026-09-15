@@ -341,10 +341,39 @@ select {
   padding: 7px 14px;
 }
 
-.item-note {
+.item-note,
+.item-sales {
   margin: 0 0 8px;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.item-sales {
+  color: #555;
+}
+
+.field-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sale-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sale-row span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.sale-field .text-btn {
+  align-self: start;
 }
 
 .item-price {

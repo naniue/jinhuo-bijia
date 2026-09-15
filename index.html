@@ -32,6 +32,7 @@
         <input id="search" type="search" placeholder="搜索商品名" />
         <select id="sort">
           <option value="recommend">おすすめ順</option>
+          <option value="sale">发售日期</option>
           <option value="newest">最近添加</option>
           <option value="name">商品名</option>
         </select>
@@ -39,7 +40,7 @@
     </div>
 
     <details class="calc-panel">
-      <summary>快速试算 · 输入日元后换算人民币</summary>
+      <summary>快速试算 · 按不含运费比价，630円按整单算</summary>
       <div class="calc-grid" id="calc-grid"></div>
       <div class="calc-foot">
         <p id="calc-hint">至少填写一个渠道价格后，会立刻换算人民币并标出推荐。</p>
@@ -78,9 +79,15 @@
           线下（日元）
           <input name="offline" type="number" min="0" step="1" placeholder="日元标价" />
         </label>
+        <div class="full sale-field">
+          <span>发售日期</span>
+          <p class="field-hint">同一商品多次贩卖就各加一行，会显示成 2024年03月 / 2025年07月。</p>
+          <div id="sale-dates"></div>
+          <button type="button" class="text-btn" id="add-sale-date">添加一次贩卖</button>
+        </div>
         <label class="full">
-          备注
-          <input name="note" maxlength="120" placeholder="规格、店铺、到货时间等" />
+          其他备注
+          <input name="note" maxlength="120" placeholder="规格、店铺等，日期请写在上面" />
         </label>
         <div class="full photo-field">
           <span>商品照片</span>
@@ -93,7 +100,7 @@
         </div>
       </div>
       <footer>
-        <p class="form-tip">AmiAmi、AniSmile 会自动加 630 日元运费后再比价。图片可直接复制粘贴。</p>
+        <p class="form-tip">价格按不含运费比价。AmiAmi / AniSmile 的 630 円是整单运费，凑单时不计入单件。图片可直接复制粘贴。</p>
         <div class="form-actions">
           <button type="button" class="ghost-btn" id="cancel-modal">取消</button>
           <button type="submit" class="header-btn">保存</button>

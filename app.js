@@ -33,6 +33,8 @@ const els = {
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightbox-image"),
   toast: document.getElementById("toast"),
+  saleDates: document.getElementById("sale-dates"),
+  addSaleDate: document.getElementById("add-sale-date"),
 };
 
 const state = loadState();
@@ -51,6 +53,7 @@ function defaultState() {
         id: crypto.randomUUID(),
         name: "示例：某比例手办",
         note: "可删除，仅用于演示比价",
+        saleDates: [{ year: 2024, month: 3 }, { year: 2025, month: 7 }],
         createdAt: Date.now(),
         amiami: 12800,
         sootang: 14200,
@@ -66,9 +69,12 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
+    const products = Array.isArray(parsed.products)
+      ? parsed.products.map(normalizeProduct)
+      : [];
     return {
       rate: Number(parsed.rate) || 0.048,
-      products: Array.isArray(parsed.products) ? parsed.products : [],
+      products,
     };
   } catch {
     return defaultState();
@@ -77,6 +83,131 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function sortUniqueDates(dates) {
+  const seen = new Set();
+  return (dates || [])
+    .map((item) => ({ year: Number(item.year), month: Number(item.month) }))
+    .filter((item) => item.year >= 1990 && item.year <= 2100 && item.month >= 1 && item.month <= 12)
+    .sort((a, b) => a.year - b.year || a.month - b.month)
+    .filter((item) => {
+      const key = `${item.year}-${item.month}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function formatSaleDate(date) {
+  return `${date.year}年${String(date.month).padStart(2, "0")}月`;
+}
+
+function formatSaleDates(dates) {
+  if (!dates?.length) return "";
+  if (dates.length === 1) return formatSaleDate(dates[0]);
+  return dates.map((date, index) => `第${index + 1}次 ${formatSaleDate(date)}`).join(" / ");
+}
+
+function parseSaleDatesFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return { dates: [], rest: "" };
+
+  const hits = [];
+  const patterns = [
+    /(\d{4})\s*年\s*(\d{1,2})\s*月(?:\s*\d{1,2}\s*日)?/g,
+    /(\d{2})\s*年\s*(\d{1,2})\s*月/g,
+    /(\d{4})[./\-](\d{1,2})(?:[./\-]\d{1,2})?/g,
+  ];
+
+  patterns.forEach((re) => {
+    let match;
+    while ((match = re.exec(raw))) {
+      let year = Number(match[1]);
+      const month = Number(match[2]);
+      if (year < 100) year += 2000;
+      if (year < 1990 || year > 2100 || month < 1 || month > 12) continue;
+      const start = match.index;
+      const end = start + match[0].length;
+      if (hits.some((hit) => start < hit.end && end > hit.start)) continue;
+      hits.push({ year, month, start, end });
+    }
+  });
+
+  hits.sort((a, b) => a.start - b.start);
+  let rest = "";
+  let cursor = 0;
+  hits.forEach((hit) => {
+    rest += raw.slice(cursor, hit.start);
+    cursor = hit.end;
+  });
+  rest += raw.slice(cursor);
+  rest = rest
+    .replace(/[第再]?\s*[一二三四五六七八九十\d]+\s*次(?:贩卖|販賣|发售|發售|再版|贩賣)?/g, " ")
+    .replace(/[\/|,;；、·~～-]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return { dates: sortUniqueDates(hits), rest };
+}
+
+function normalizeProduct(product) {
+  if (Array.isArray(product.saleDates) && product.saleDates.length) {
+    return { ...product, saleDates: sortUniqueDates(product.saleDates) };
+  }
+  const parsed = parseSaleDatesFromNote(product.note);
+  return {
+    ...product,
+    saleDates: parsed.dates,
+    note: parsed.rest,
+  };
+}
+
+function latestSaleValue(product) {
+  const dates = product.saleDates || [];
+  if (!dates.length) return 0;
+  const last = dates[dates.length - 1];
+  return last.year * 100 + last.month;
+}
+
+function monthInputValue(date) {
+  if (!date?.year || !date?.month) return "";
+  return `${date.year}-${String(date.month).padStart(2, "0")}`;
+}
+
+function readSaleDates() {
+  return sortUniqueDates(
+    [...els.saleDates.querySelectorAll("input[type=month]")].map((input) => {
+      if (!input.value) return null;
+      const [year, month] = input.value.split("-").map(Number);
+      return { year, month };
+    }).filter(Boolean)
+  );
+}
+
+function renderSaleDateFields(dates) {
+  const list = dates?.length ? dates : [{}];
+  els.saleDates.innerHTML = "";
+  list.forEach((date, index) => {
+    const row = document.createElement("div");
+    row.className = "sale-row";
+    row.innerHTML = `
+      <span>第${index + 1}次</span>
+      <input type="month" value="${monthInputValue(date)}" />
+      <button type="button" class="text-btn" data-remove>删除</button>
+    `;
+    row.querySelector("[data-remove]").addEventListener("click", () => {
+      row.remove();
+      const current = [...els.saleDates.querySelectorAll(".sale-row")].map((item) => {
+        const value = item.querySelector("input").value;
+        if (!value) return {};
+        const [year, month] = value.split("-").map(Number);
+        return { year, month };
+      });
+      renderSaleDateFields(current.length ? current : [{}]);
+    });
+    els.saleDates.appendChild(row);
+  });
 }
 
 function openPhotoDb() {
@@ -135,8 +266,7 @@ function formatCny(value) {
 
 function channelQuote(price, shipping, rate) {
   if (price == null) return null;
-  const yenTotal = price + shipping;
-  return { price, shipping, yenTotal, cny: yenTotal * rate };
+  return { price, shipping, yenTotal: price, cny: price * rate };
 }
 
 function quotesFromProduct(product, rate) {
@@ -161,9 +291,6 @@ function bestQuote(product, rate) {
 
 function yenLine(quote) {
   if (!quote) return "暂无标价";
-  if (quote.shipping) {
-    return `${formatYen(quote.price)} + ${formatYen(quote.shipping)}`;
-  }
   return formatYen(quote.price);
 }
 
@@ -182,8 +309,8 @@ function fillCalcCard(card, channel, quote, bestId) {
   card.querySelector(".yen").textContent = yenLine(quote);
   card.querySelector(".cny").textContent = empty ? "—" : formatCny(quote.cny);
   card.querySelector(".ship").textContent = channel.shipping
-    ? `含运费 ${formatYen(channel.shipping)}`
-    : "无额外运费";
+    ? `整单运费 ${formatYen(channel.shipping)}，不计入单件`
+    : "无单件运费";
   let badge = card.querySelector(".badge");
   if (bestId && channel.id === bestId) {
     if (!badge) {
@@ -230,7 +357,7 @@ function updateCalc() {
   quotes.forEach((item) => fillCalcCard(calcCards[item.id].card, item, item.quote, bestId));
   const best = quotes.find((item) => item.id === bestId);
   els.calcHint.textContent = best
-    ? `当前推荐 ${best.name}，到货成本约 ${formatCny(best.quote.cny)}。`
+    ? `当前推荐 ${best.name}，不含运费约 ${formatCny(best.quote.cny)}。`
     : "至少填写一个渠道价格后，会立刻换算人民币并标出推荐。";
 }
 
@@ -246,13 +373,14 @@ function filteredProducts() {
   const keyword = els.search.value.trim().toLowerCase();
   const rate = Number(els.rate.value) || 0;
   const products = state.products.filter((product) => {
-    const haystack = `${product.name} ${product.note || ""}`.toLowerCase();
+    const haystack = `${product.name} ${product.note || ""} ${formatSaleDates(product.saleDates)}`.toLowerCase();
     return haystack.includes(keyword);
   });
 
   products.sort((a, b) => {
     if (els.sort.value === "name") return a.name.localeCompare(b.name, "zh");
     if (els.sort.value === "newest") return (b.createdAt || 0) - (a.createdAt || 0);
+    if (els.sort.value === "sale") return latestSaleValue(b) - latestSaleValue(a);
     const aBest = bestQuote(a, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
     const bBest = bestQuote(b, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
     return aBest - bBest;
@@ -334,9 +462,10 @@ function renderLibrary() {
           </div>
         </div>
         <h3>${escapeHtml(product.name)}</h3>
+        ${product.saleDates?.length ? `<p class="item-sales">${escapeHtml(formatSaleDates(product.saleDates))}</p>` : ""}
         ${product.note ? `<p class="item-note">${escapeHtml(product.note)}</p>` : ""}
         <p class="item-price">
-          <span class="off">${best?.quote.shipping ? "含运费" : "推荐价"}</span>
+          <span class="off">不含运费</span>
           <span class="cny">${best ? formatCny(best.quote.cny) : "—"}</span>
         </p>
         <ul class="item-channels"></ul>
@@ -397,11 +526,13 @@ async function openModal(product) {
   els.modalTitle.textContent = product ? "编辑商品" : "添加商品";
   els.form.reset();
   showPhotoPreview(null);
+  const draft = product ? normalizeProduct(product) : { saleDates: [], note: "" };
+  renderSaleDateFields(draft.saleDates);
   if (product) {
-    els.form.name.value = product.name || "";
-    els.form.note.value = product.note || "";
+    els.form.name.value = draft.name || "";
+    els.form.note.value = draft.note || "";
     CHANNELS.forEach((channel) => {
-      const value = product[channel.id];
+      const value = draft[channel.id];
       els.form[channel.id].value = value == null ? "" : value;
     });
     if (product.id) {
@@ -422,9 +553,11 @@ function closeModal() {
 }
 
 function readFormProduct() {
+  const typed = parseSaleDatesFromNote(els.form.note.value.trim());
   return {
     name: els.form.name.value.trim(),
-    note: els.form.note.value.trim(),
+    note: typed.rest,
+    saleDates: sortUniqueDates([...readSaleDates(), ...typed.dates]),
     ...Object.fromEntries(
       CHANNELS.map((channel) => [channel.id, toNumber(els.form[channel.id].value)])
     ),
@@ -486,6 +619,7 @@ function fileFromClipboard(clipboardData) {
 }
 
 els.rate.value = state.rate;
+saveState();
 buildCalc();
 renderLibrary();
 
@@ -505,6 +639,15 @@ els.sort.addEventListener("change", () => {
   renderLibrary();
 });
 els.addProduct.addEventListener("click", () => openModal());
+els.addSaleDate.addEventListener("click", () => {
+  const current = [...els.saleDates.querySelectorAll("input[type=month]")].map((input) => {
+    if (!input.value) return {};
+    const [year, month] = input.value.split("-").map(Number);
+    return { year, month };
+  });
+  current.push({});
+  renderSaleDateFields(current);
+});
 els.closeModal.addEventListener("click", closeModal);
 els.cancelModal.addEventListener("click", closeModal);
 els.lightbox.addEventListener("click", () => els.lightbox.close());
@@ -551,7 +694,7 @@ els.saveCalc.addEventListener("click", () => {
     alert("请先至少填写一个渠道的日元价格。");
     return;
   }
-  openModal({ ...draft, name: "", note: "" });
+  openModal({ ...draft, name: "", note: "", saleDates: [] });
 });
 
 els.form.addEventListener("submit", async (event) => {
