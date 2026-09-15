@@ -29,9 +29,10 @@
     <div class="result-bar">
       <p id="result-label">「全部」の検索結果(0件)</p>
       <div class="result-tools">
-        <input id="search" type="search" placeholder="搜索商品名" />
+        <input id="search" type="search" placeholder="搜索商品名 / 动漫 / 种类" />
         <select id="sort">
           <option value="recommend">おすすめ順</option>
+          <option value="category">按分类</option>
           <option value="sale">发售日期</option>
           <option value="newest">最近添加</option>
           <option value="name">商品名</option>
@@ -48,7 +49,16 @@
       </div>
     </details>
 
-    <nav class="pager" id="pager" hidden></nav>
+    <div class="filter-panel">
+      <div class="filter-row">
+        <span>动漫</span>
+        <div class="chip-row" id="anime-filters"></div>
+      </div>
+      <div class="filter-row">
+        <span>种类</span>
+        <div class="chip-row" id="kind-filters"></div>
+      </div>
+    </div>
     <div class="item-grid" id="product-list"></div>
   </main>
 
@@ -62,6 +72,14 @@
         <label class="full">
           商品名称
           <input name="name" required maxlength="80" placeholder="例如：るかっぷ 伏黒恵" />
+        </label>
+        <label>
+          动漫
+          <input name="anime" list="anime-list" maxlength="40" placeholder="例如：咒术廻戦" />
+        </label>
+        <label>
+          商品种类
+          <input name="kind" list="kind-list" maxlength="40" placeholder="例如：手办 / 吧唧 / 坐垫" />
         </label>
         <label>
           AmiAmi（日元）
@@ -112,6 +130,9 @@
   <dialog class="lightbox" id="lightbox" aria-label="查看商品照片">
     <img id="lightbox-image" alt="商品照片" />
   </dialog>
+
+  <datalist id="anime-list"></datalist>
+  <datalist id="kind-list"></datalist>
 
   <p class="toast" id="toast" hidden></p>
   <script src="app.js"></script>

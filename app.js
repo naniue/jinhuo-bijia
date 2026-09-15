@@ -1,7 +1,7 @@
 const STORAGE_KEY = "purchase-price-app-v1";
 const PHOTO_DB = "purchase-price-photos";
 const PHOTO_STORE = "photos";
-const PAGE_SIZE = 12;
+const DEFAULT_KINDS = ["手办", "吧唧", "色纸", "立牌", "亚克力", "坐垫", "挂件", "毛绒", "海报", "特典"];
 const CHANNELS = [
   { id: "amiami", name: "AmiAmi", shipping: 630 },
   { id: "sootang", name: "Sootang", shipping: 0 },
@@ -19,7 +19,10 @@ const els = {
   resultLabel: document.getElementById("result-label"),
   addProduct: document.getElementById("add-product"),
   productList: document.getElementById("product-list"),
-  pager: document.getElementById("pager"),
+  animeFilters: document.getElementById("anime-filters"),
+  kindFilters: document.getElementById("kind-filters"),
+  animeList: document.getElementById("anime-list"),
+  kindList: document.getElementById("kind-list"),
   modal: document.getElementById("product-modal"),
   form: document.getElementById("product-form"),
   modalTitle: document.getElementById("modal-title"),
@@ -42,7 +45,8 @@ const photoCache = new Map();
 let editingId = null;
 let draftPhoto = null;
 let photoDirty = false;
-let currentPage = 1;
+let filterAnime = "";
+let filterKind = "";
 const calcCards = {};
 
 function defaultState() {
@@ -53,6 +57,8 @@ function defaultState() {
         id: crypto.randomUUID(),
         name: "示例：某比例手办",
         note: "可删除，仅用于演示比价",
+        anime: "示例作品",
+        kind: "手办",
         saleDates: [{ year: 2024, month: 3 }, { year: 2025, month: 7 }],
         createdAt: Date.now(),
         amiami: 12800,
@@ -152,15 +158,69 @@ function parseSaleDatesFromNote(note) {
 }
 
 function normalizeProduct(product) {
-  if (Array.isArray(product.saleDates) && product.saleDates.length) {
-    return { ...product, saleDates: sortUniqueDates(product.saleDates) };
-  }
-  const parsed = parseSaleDatesFromNote(product.note);
+  const parsed = Array.isArray(product.saleDates) && product.saleDates.length
+    ? { dates: sortUniqueDates(product.saleDates), rest: product.note || "" }
+    : parseSaleDatesFromNote(product.note);
   return {
     ...product,
+    anime: (product.anime || "").trim(),
+    kind: (product.kind || "").trim(),
     saleDates: parsed.dates,
     note: parsed.rest,
   };
+}
+
+function collectNames(key) {
+  return [...new Set(state.products.map((item) => (item[key] || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh"));
+}
+
+function fillDatalists() {
+  const animes = collectNames("anime");
+  const kinds = [...new Set([...DEFAULT_KINDS, ...collectNames("kind")])].sort((a, b) =>
+    a.localeCompare(b, "zh")
+  );
+  els.animeList.innerHTML = animes.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
+  els.kindList.innerHTML = kinds.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
+}
+
+function renderChips(container, values, selected, onSelect) {
+  container.innerHTML = "";
+  values.forEach((value) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `chip${value === selected ? " is-on" : ""}`;
+    button.textContent = chipLabel(value);
+    button.addEventListener("click", () => onSelect(value));
+    container.appendChild(button);
+  });
+}
+
+function categoryValues(key, selectedOther, otherKey) {
+  const names = [
+    ...new Set(
+      state.products
+        .filter((item) => !selectedOther || item[otherKey] === selectedOther)
+        .map((item) => (item[key] || "").trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b, "zh"));
+  const hasEmpty = state.products.some(
+    (item) =>
+      !(item[key] || "").trim() && (!selectedOther || item[otherKey] === selectedOther)
+  );
+  return hasEmpty ? [...names, "__none__"] : names;
+}
+
+function chipLabel(value) {
+  if (value === "__none__") return "未分类";
+  return value || "全部";
+}
+
+function matchesFilter(value, selected) {
+  if (!selected) return true;
+  if (selected === "__none__") return !value;
+  return value === selected;
 }
 
 function latestSaleValue(product) {
@@ -373,14 +433,25 @@ function filteredProducts() {
   const keyword = els.search.value.trim().toLowerCase();
   const rate = Number(els.rate.value) || 0;
   const products = state.products.filter((product) => {
-    const haystack = `${product.name} ${product.note || ""} ${formatSaleDates(product.saleDates)}`.toLowerCase();
-    return haystack.includes(keyword);
+    const haystack = `${product.name} ${product.note || ""} ${product.anime || ""} ${product.kind || ""} ${formatSaleDates(product.saleDates)}`.toLowerCase();
+    return (
+      haystack.includes(keyword) &&
+      matchesFilter((product.anime || "").trim(), filterAnime) &&
+      matchesFilter((product.kind || "").trim(), filterKind)
+    );
   });
 
   products.sort((a, b) => {
     if (els.sort.value === "name") return a.name.localeCompare(b.name, "zh");
     if (els.sort.value === "newest") return (b.createdAt || 0) - (a.createdAt || 0);
     if (els.sort.value === "sale") return latestSaleValue(b) - latestSaleValue(a);
+    if (els.sort.value === "category") {
+      return (
+        (a.anime || "未分类").localeCompare(b.anime || "未分类", "zh") ||
+        (a.kind || "").localeCompare(b.kind || "", "zh") ||
+        a.name.localeCompare(b.name, "zh")
+      );
+    }
     const aBest = bestQuote(a, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
     const bBest = bestQuote(b, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
     return aBest - bBest;
@@ -388,62 +459,48 @@ function filteredProducts() {
   return products;
 }
 
-function renderPager(totalPages) {
-  els.pager.innerHTML = "";
-  if (totalPages <= 1) {
-    els.pager.hidden = true;
-    return;
-  }
-  els.pager.hidden = false;
-  for (let page = 1; page <= totalPages; page += 1) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `page-btn${page === currentPage ? " current" : ""}`;
-    button.textContent = String(page);
-    button.addEventListener("click", () => {
-      currentPage = page;
-      renderLibrary();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-    els.pager.appendChild(button);
-  }
-  if (currentPage < totalPages) {
-    const next = document.createElement("button");
-    next.type = "button";
-    next.className = "page-btn next";
-    next.textContent = "次へ >";
-    next.addEventListener("click", () => {
-      currentPage += 1;
-      renderLibrary();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-    els.pager.appendChild(next);
-  }
+function renderFilters() {
+  const animes = categoryValues("anime", filterKind, "kind");
+  const kinds = categoryValues("kind", filterAnime, "anime");
+  if (filterAnime && filterAnime !== "__none__" && !animes.includes(filterAnime)) filterAnime = "";
+  if (filterKind && filterKind !== "__none__" && !kinds.includes(filterKind)) filterKind = "";
+
+  renderChips(els.animeFilters, ["", ...animes], filterAnime, (value) => {
+    filterAnime = value;
+    renderLibrary();
+  });
+  renderChips(els.kindFilters, ["", ...kinds], filterKind, (value) => {
+    filterKind = value;
+    renderLibrary();
+  });
 }
 
 function renderLibrary() {
   const keyword = els.search.value.trim();
   const rate = Number(els.rate.value) || 0;
   const products = filteredProducts();
-  const totalPages = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
-  currentPage = Math.min(currentPage, totalPages);
-  const pageItems = products.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  renderFilters();
+  fillDatalists();
 
-  els.resultLabel.textContent = keyword
-    ? `「${keyword}」の検索結果(${products.length}件)`
+  const parts = [
+    filterAnime ? chipLabel(filterAnime) : "",
+    filterKind ? chipLabel(filterKind) : "",
+    keyword,
+  ].filter(Boolean);
+  els.resultLabel.textContent = parts.length
+    ? `「${parts.join(" / ")}」の検索結果(${products.length}件)`
     : `「全部」の検索結果(${state.products.length}件)`;
 
   els.productList.innerHTML = "";
-  if (!pageItems.length) {
+  if (!products.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = keyword ? "没有找到匹配的商品。" : "还没有商品。";
+    empty.textContent = keyword || filterAnime || filterKind ? "没有找到匹配的商品。" : "还没有商品。";
     els.productList.appendChild(empty);
-    renderPager(0);
     return;
   }
 
-  pageItems.forEach((product) => {
+  products.forEach((product) => {
     const quotes = quotesFromProduct(product, rate);
     const best = quotes.find((item) => item.id === bestChannelId(quotes));
     const card = document.createElement("article");
@@ -462,6 +519,7 @@ function renderLibrary() {
           </div>
         </div>
         <h3>${escapeHtml(product.name)}</h3>
+        ${[product.anime, product.kind].filter(Boolean).length ? `<p class="item-cats">${escapeHtml([product.anime, product.kind].filter(Boolean).join(" · "))}</p>` : ""}
         ${product.saleDates?.length ? `<p class="item-sales">${escapeHtml(formatSaleDates(product.saleDates))}</p>` : ""}
         ${product.note ? `<p class="item-note">${escapeHtml(product.note)}</p>` : ""}
         <p class="item-price">
@@ -502,8 +560,6 @@ function renderLibrary() {
 
     els.productList.appendChild(card);
   });
-
-  renderPager(totalPages);
 }
 
 function escapeHtml(value) {
@@ -526,10 +582,13 @@ async function openModal(product) {
   els.modalTitle.textContent = product ? "编辑商品" : "添加商品";
   els.form.reset();
   showPhotoPreview(null);
+  fillDatalists();
   const draft = product ? normalizeProduct(product) : { saleDates: [], note: "" };
   renderSaleDateFields(draft.saleDates);
   if (product) {
     els.form.name.value = draft.name || "";
+    els.form.anime.value = draft.anime || "";
+    els.form.kind.value = draft.kind || "";
     els.form.note.value = draft.note || "";
     CHANNELS.forEach((channel) => {
       const value = draft[channel.id];
@@ -556,6 +615,8 @@ function readFormProduct() {
   const typed = parseSaleDatesFromNote(els.form.note.value.trim());
   return {
     name: els.form.name.value.trim(),
+    anime: els.form.anime.value.trim(),
+    kind: els.form.kind.value.trim(),
     note: typed.rest,
     saleDates: sortUniqueDates([...readSaleDates(), ...typed.dates]),
     ...Object.fromEntries(
@@ -631,11 +692,9 @@ els.rate.addEventListener("input", () => {
 });
 
 els.search.addEventListener("input", () => {
-  currentPage = 1;
   renderLibrary();
 });
 els.sort.addEventListener("change", () => {
-  currentPage = 1;
   renderLibrary();
 });
 els.addProduct.addEventListener("click", () => openModal());
@@ -694,7 +753,7 @@ els.saveCalc.addEventListener("click", () => {
     alert("请先至少填写一个渠道的日元价格。");
     return;
   }
-  openModal({ ...draft, name: "", note: "", saleDates: [] });
+  openModal({ ...draft, name: "", note: "", saleDates: [], anime: "", kind: "" });
 });
 
 els.form.addEventListener("submit", async (event) => {

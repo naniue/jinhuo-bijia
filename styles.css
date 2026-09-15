@@ -88,7 +88,7 @@ select,
 .ghost-btn,
 .icon-btn,
 .text-btn,
-.page-btn {
+.chip {
   border: 0;
   background: none;
   cursor: pointer;
@@ -282,8 +282,7 @@ select {
 .item-photo-empty[hidden],
 .photo-picker img[hidden],
 #remove-photo[hidden],
-.toast[hidden],
-.pager[hidden] {
+.toast[hidden] {
   display: none !important;
 }
 
@@ -342,15 +341,63 @@ select {
 }
 
 .item-note,
-.item-sales {
+.item-sales,
+.item-cats {
   margin: 0 0 8px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
-.item-sales {
+.item-sales,
+.item-cats {
   color: #555;
+}
+
+.filter-panel {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  margin: 0 0 18px;
+  padding: 10px 0 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.filter-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  align-items: start;
+  margin-top: 8px;
+}
+
+.filter-row > span {
+  padding-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid #ccc;
+  background: #fff;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip.is-on {
+  background: #333;
+  color: #fff;
+  border-color: #333;
 }
 
 .field-hint {
