@@ -1010,25 +1010,15 @@ function filteredProducts() {
   });
 
   products.sort((a, b) => {
-    if (els.sort.value === "name") return a.name.localeCompare(b.name, "zh");
-    if (els.sort.value === "newest") return (b.createdAt || 0) - (a.createdAt || 0);
-    if (els.sort.value === "sale") return latestSaleValue(b) - latestSaleValue(a);
-    if (els.sort.value === "reprints") {
-      return (
-        (b.saleDates?.length || 0) - (a.saleDates?.length || 0) ||
-        latestSaleValue(b) - latestSaleValue(a)
-      );
+    if (els.sort.value === "price") {
+      const aBest = bestQuote(a, rate)?.quote.cny ?? -1;
+      const bBest = bestQuote(b, rate)?.quote.cny ?? -1;
+      return bBest - aBest;
     }
-    if (els.sort.value === "category") {
-      return (
-        (a.anime || "未分类").localeCompare(b.anime || "未分类", "zh") ||
-        (a.kind || "").localeCompare(b.kind || "", "zh") ||
-        a.name.localeCompare(b.name, "zh")
-      );
-    }
-    const aBest = bestQuote(a, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
-    const bBest = bestQuote(b, rate)?.quote.cny ?? Number.POSITIVE_INFINITY;
-    return aBest - bBest;
+    return (
+      (b.saleDates?.length || 0) - (a.saleDates?.length || 0) ||
+      latestSaleValue(b) - latestSaleValue(a)
+    );
   });
   return products;
 }
