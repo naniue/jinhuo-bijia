@@ -2,7 +2,8 @@ const STORAGE_KEY = "purchase-price-app-v1";
 const CLOUD_KEY = "purchase-price-cloud-v1";
 const PHOTO_DB = "purchase-price-photos";
 const PHOTO_STORE = "photos";
-const DEFAULT_KINDS = ["手办", "吧唧", "色纸", "立牌", "亚克力", "坐垫", "挂件", "毛绒", "海报", "特典"];
+const DEFAULT_KINDS = ["LOOKUP", "手办", "吧唧", "色纸", "立牌", "亚克力", "坐垫", "挂件", "毛绒", "海报", "特典"];
+const LOOKUP_EXTRA_CNY = 28;
 const CHANNELS = [
   { id: "amiami", name: "AmiAmi", shipping: 630 },
   { id: "sootang", name: "Sootang", shipping: 0 },
@@ -45,6 +46,7 @@ const els = {
   detailSales: document.getElementById("detail-sales"),
   detailInterval: document.getElementById("detail-interval"),
   detailNote: document.getElementById("detail-note"),
+  detailPriceOff: document.getElementById("detail-price-off"),
   detailChannels: document.getElementById("detail-channels"),
   detailPhoto: document.getElementById("detail-photo"),
   detailPhotoEmpty: document.getElementById("detail-photo-empty"),
@@ -879,15 +881,24 @@ function formatCny(value) {
   })}`;
 }
 
-function channelQuote(price, shipping, rate) {
+function isLookupProduct(product) {
+  return /lookup/i.test(String((product && product.kind) || ""));
+}
+
+function lookupExtraCny(product) {
+  return isLookupProduct(product) ? LOOKUP_EXTRA_CNY : 0;
+}
+
+function channelQuote(price, shipping, rate, extraCny) {
   if (price == null) return null;
-  return { price, shipping, yenTotal: price, cny: price * rate };
+  return { price, shipping, yenTotal: price, cny: price * rate + (extraCny || 0) };
 }
 
 function quotesFromProduct(product, rate) {
+  const extraCny = lookupExtraCny(product);
   return CHANNELS.map((channel) => ({
     ...channel,
-    quote: channelQuote(toNumber(product[channel.id]), channel.shipping, rate),
+    quote: channelQuote(toNumber(product[channel.id]), channel.shipping, rate, extraCny),
   }));
 }
 
@@ -1164,6 +1175,11 @@ async function openDetail(product) {
   els.detailInterval.hidden = !intervalText;
   els.detailNote.textContent = product.note || "";
   els.detailNote.hidden = !product.note;
+  if (els.detailPriceOff) {
+    els.detailPriceOff.textContent = isLookupProduct(product)
+      ? `不含运费 · 含 LOOKUP +¥${LOOKUP_EXTRA_CNY}`
+      : "不含运费";
+  }
   els.detailChannels.innerHTML = "";
   quotes.forEach((item) => {
     const row = document.createElement("li");
