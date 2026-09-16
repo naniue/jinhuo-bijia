@@ -503,13 +503,17 @@ function renderLibrary() {
   products.forEach((product) => {
     const quotes = quotesFromProduct(product, rate);
     const best = quotes.find((item) => item.id === bestChannelId(quotes));
+    const saleCount = product.saleDates?.length || 0;
     const card = document.createElement("article");
     card.className = "item";
     card.innerHTML = `
-      <button type="button" class="item-photo" data-photo>
-        <img alt="${escapeHtml(product.name)}" hidden />
-        <span class="item-photo-empty">NO IMAGE</span>
-      </button>
+      <div class="item-photo-wrap">
+        <button type="button" class="item-photo" data-photo>
+          <img alt="${escapeHtml(product.name)}" hidden />
+          <span class="item-photo-empty">NO IMAGE</span>
+        </button>
+        ${saleCount ? `<span class="sale-count" title="贩卖${saleCount}次">${saleCount}</span>` : ""}
+      </div>
       <div class="item-body">
         <div class="item-head">
           <span class="tag${best ? " best" : ""}">${best ? `推荐 ${best.name}` : "未比价"}</span>
