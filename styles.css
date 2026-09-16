@@ -101,6 +101,27 @@ select,
   border-radius: 2px;
 }
 
+.cloud-btn {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.cloud-btn.is-on {
+  color: var(--blue);
+}
+
+#cloud-sql {
+  width: 100%;
+  min-height: 140px;
+  border: 1px solid #ccc;
+  border-radius: 2px;
+  padding: 8px;
+  font-family: Consolas, "SF Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 .catalog {
   padding: 28px 0 80px;
 }

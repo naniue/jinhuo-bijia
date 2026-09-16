@@ -1,4 +1,5 @@
 const STORAGE_KEY = "purchase-price-app-v1";
+const CLOUD_KEY = "purchase-price-cloud-v1";
 const PHOTO_DB = "purchase-price-photos";
 const PHOTO_STORE = "photos";
 const DEFAULT_KINDS = ["手办", "吧唧", "色纸", "立牌", "亚克力", "坐垫", "挂件", "毛绒", "海报", "特典"];
@@ -52,6 +53,20 @@ const els = {
   detailEdit: document.getElementById("detail-edit"),
   detailDelete: document.getElementById("detail-delete"),
   bootError: document.getElementById("boot-error"),
+  cloudBtn: document.getElementById("cloud-btn"),
+  cloudModal: document.getElementById("cloud-modal"),
+  cloudForm: document.getElementById("cloud-form"),
+  cloudStatus: document.getElementById("cloud-status"),
+  cloudSql: document.getElementById("cloud-sql"),
+  cloudUrl: document.getElementById("cloud-url"),
+  cloudAnon: document.getElementById("cloud-anon"),
+  cloudEmail: document.getElementById("cloud-email"),
+  cloudPassword: document.getElementById("cloud-password"),
+  closeCloud: document.getElementById("close-cloud"),
+  copySql: document.getElementById("copy-sql"),
+  cloudLogin: document.getElementById("cloud-login"),
+  cloudSignup: document.getElementById("cloud-signup"),
+  cloudDisconnect: document.getElementById("cloud-disconnect"),
 };
 
 const state = loadState();
@@ -63,6 +78,8 @@ let filterAnime = "";
 let filterKind = "";
 const calcCards = {};
 let detailProduct = null;
+let cloudPushTimer = 0;
+let cloudBusy = false;
 
 function uid() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -123,11 +140,423 @@ function loadState() {
   }
 }
 
-function saveState() {
+function saveState(options) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
     console.warn("saveState", error);
+  }
+  if (!options || !options.localOnly) scheduleCloudPush();
+}
+
+function loadCloudConfig() {
+  try {
+    return JSON.parse(localStorage.getItem(CLOUD_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCloudConfig(partial) {
+  const next = Object.assign({}, loadCloudConfig(), partial);
+  localStorage.setItem(CLOUD_KEY, JSON.stringify(next));
+  return next;
+}
+
+function cloudCfg() {
+  const saved = loadCloudConfig();
+  return {
+    url: String(saved.url || window.SUPABASE_URL || "").replace(/\/$/, ""),
+    anonKey: saved.anonKey || window.SUPABASE_ANON_KEY || "",
+    email: saved.email || "",
+    accessToken: saved.accessToken || "",
+    refreshToken: saved.refreshToken || "",
+    userId: saved.userId || "",
+    expiresAt: Number(saved.expiresAt) || 0,
+  };
+}
+
+function isCloudLoggedIn() {
+  const cfg = cloudCfg();
+  return Boolean(cfg.url && cfg.anonKey && cfg.accessToken && cfg.userId);
+}
+
+function isDemoProduct(product) {
+  return product && product.name === "示例：某比例手办";
+}
+
+function photoPath(id) {
+  return `${cloudCfg().userId}/${id}.jpg`;
+}
+
+function updateCloudButton() {
+  if (!els.cloudBtn) return;
+  if (isCloudLoggedIn()) {
+    els.cloudBtn.textContent = "已同步";
+    els.cloudBtn.classList.add("is-on");
+  } else {
+    els.cloudBtn.textContent = "云同步";
+    els.cloudBtn.classList.remove("is-on");
+  }
+}
+
+function setCloudStatus(text) {
+  if (els.cloudStatus) els.cloudStatus.textContent = text;
+}
+
+async function readApiError(res) {
+  try {
+    const data = await res.json();
+    return data.error_description || data.msg || data.message || data.error || res.statusText;
+  } catch {
+    return res.statusText || "请求失败";
+  }
+}
+
+function storeSession(session, extra) {
+  const user = session.user || {};
+  saveCloudConfig(
+    Object.assign(
+      {
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+        userId: user.id || cloudCfg().userId,
+        expiresAt: session.expires_at
+          ? session.expires_at * 1000
+          : Date.now() + (session.expires_in || 3600) * 1000,
+      },
+      extra || {}
+    )
+  );
+}
+
+async function cloudAuth(path, body) {
+  const cfg = cloudCfg();
+  const res = await fetch(`${cfg.url}${path}`, {
+    method: "POST",
+    headers: {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.anonKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || data.error || "登录失败");
+  return data;
+}
+
+async function ensureSession() {
+  const cfg = cloudCfg();
+  if (!cfg.url || !cfg.anonKey) throw new Error("请先填写 Project URL 和 anon key");
+  if (!cfg.accessToken) throw new Error("请先登录");
+  if (cfg.expiresAt - 20000 > Date.now()) return;
+  if (!cfg.refreshToken) throw new Error("登录已过期，请重新登录");
+  const data = await cloudAuth("/auth/v1/token?grant_type=refresh_token", {
+    refresh_token: cfg.refreshToken,
+  });
+  storeSession(data);
+}
+
+async function cloudRequest(path, options) {
+  await ensureSession();
+  const cfg = cloudCfg();
+  const headers = Object.assign(
+    {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.accessToken}`,
+    },
+    options && options.headers
+  );
+  const res = await fetch(`${cfg.url}${path}`, Object.assign({}, options, { headers }));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await readApiError(res));
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function productToRow(product) {
+  return {
+    id: product.id,
+    user_id: cloudCfg().userId,
+    name: product.name,
+    anime: product.anime || "",
+    kind: product.kind || "",
+    note: product.note || "",
+    sale_dates: product.saleDates || [],
+    amiami: product.amiami,
+    sootang: product.sootang,
+    anismile: product.anismile,
+    offline: product.offline,
+    created_at: new Date(product.createdAt || Date.now()).toISOString(),
+    updated_at: new Date(product.updatedAt || product.createdAt || Date.now()).toISOString(),
+  };
+}
+
+function rowToProduct(row) {
+  return normalizeProduct({
+    id: row.id,
+    name: row.name,
+    anime: row.anime,
+    kind: row.kind,
+    note: row.note,
+    saleDates: row.sale_dates,
+    amiami: row.amiami == null ? null : Number(row.amiami),
+    sootang: row.sootang == null ? null : Number(row.sootang),
+    anismile: row.anismile == null ? null : Number(row.anismile),
+    offline: row.offline == null ? null : Number(row.offline),
+    createdAt: Date.parse(row.created_at) || Date.now(),
+    updatedAt: Date.parse(row.updated_at) || Date.now(),
+  });
+}
+
+async function cloudUpsertProducts(products) {
+  const rows = (products || []).filter((item) => !isDemoProduct(item)).map(productToRow);
+  if (!rows.length) return;
+  await cloudRequest("/rest/v1/products?on_conflict=id", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(rows),
+  });
+}
+
+async function cloudFetchProducts() {
+  const rows = await cloudRequest("/rest/v1/products?select=*&order=created_at.desc", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  return Array.isArray(rows) ? rows.map(rowToProduct) : [];
+}
+
+async function cloudDeleteProduct(id) {
+  await cloudRequest(`/rest/v1/products?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" });
+  await cloudSavePhoto(id, null);
+}
+
+async function cloudSaveSettings() {
+  await cloudRequest("/rest/v1/app_settings?on_conflict=user_id", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      user_id: cloudCfg().userId,
+      rate: Number(state.rate) || 0.048,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
+async function cloudFetchSettings() {
+  const rows = await cloudRequest("/rest/v1/app_settings?select=rate", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  return rows && rows[0] ? rows[0] : null;
+}
+
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("读取照片失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function cloudSavePhoto(id, dataUrl) {
+  await ensureSession();
+  const cfg = cloudCfg();
+  const path = photoPath(id);
+  if (!dataUrl) {
+    await fetch(`${cfg.url}/storage/v1/object/product-photos/${path}`, {
+      method: "DELETE",
+      headers: {
+        apikey: cfg.anonKey,
+        Authorization: `Bearer ${cfg.accessToken}`,
+      },
+    }).catch(() => {});
+    return;
+  }
+  const blob = await dataUrlToBlob(dataUrl);
+  const res = await fetch(`${cfg.url}/storage/v1/object/product-photos/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.accessToken}`,
+      "Content-Type": blob.type || "image/jpeg",
+      "x-upsert": "true",
+    },
+    body: blob,
+  });
+  if (!res.ok) throw new Error(await readApiError(res));
+}
+
+async function cloudGetPhoto(id) {
+  await ensureSession();
+  const cfg = cloudCfg();
+  const res = await fetch(`${cfg.url}/storage/v1/object/product-photos/${photoPath(id)}`, {
+    headers: {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.accessToken}`,
+    },
+  });
+  if (res.status === 400 || res.status === 404) return null;
+  if (!res.ok) throw new Error(await readApiError(res));
+  return blobToDataUrl(await res.blob());
+}
+
+async function pushLocalPhotos() {
+  for (let i = 0; i < state.products.length; i += 1) {
+    const product = state.products[i];
+    if (isDemoProduct(product)) continue;
+    const dataUrl = await getPhotoFromIdb(product.id);
+    if (dataUrl) await cloudSavePhoto(product.id, dataUrl);
+  }
+}
+
+function scheduleCloudPush() {
+  if (!isCloudLoggedIn() || cloudBusy) return;
+  clearTimeout(cloudPushTimer);
+  cloudPushTimer = setTimeout(() => {
+    syncToCloud().catch((error) => {
+      console.warn(error);
+      setCloudStatus(error.message || "云同步失败");
+    });
+  }, 600);
+}
+
+async function syncToCloud() {
+  if (!isCloudLoggedIn() || cloudBusy) return;
+  cloudBusy = true;
+  try {
+    await ensureSession();
+    await cloudSaveSettings();
+    updateCloudButton();
+  } finally {
+    cloudBusy = false;
+  }
+}
+
+async function pullFromCloud() {
+  const remote = await cloudFetchProducts();
+  const settings = await cloudFetchSettings();
+  if (remote.length) {
+    state.products = remote;
+  } else {
+    await cloudUpsertProducts(state.products);
+    await pushLocalPhotos();
+  }
+  if (settings && settings.rate) state.rate = Number(settings.rate) || state.rate;
+  if (els.rate) els.rate.value = state.rate;
+  saveState({ localOnly: true });
+  if (!remote.length) await cloudSaveSettings();
+}
+
+function fillCloudForm() {
+  const cfg = cloudCfg();
+  if (els.cloudUrl) els.cloudUrl.value = cfg.url;
+  if (els.cloudAnon) els.cloudAnon.value = cfg.anonKey;
+  if (els.cloudEmail) els.cloudEmail.value = cfg.email;
+  setCloudStatus(
+    isCloudLoggedIn()
+      ? `已登录 ${cfg.email || ""}，商品会保存到云端。`
+      : "未连接。登录后，手机和电脑会共用同一份商品。"
+  );
+}
+
+async function fillCloudSql() {
+  if (!els.cloudSql || els.cloudSql.value) return;
+  try {
+    const res = await fetch("supabase.sql");
+    els.cloudSql.value = await res.text();
+  } catch {
+    els.cloudSql.value = "请打开网站同目录的 supabase.sql 复制到 SQL Editor。";
+  }
+}
+
+function readCloudForm() {
+  const url = (els.cloudUrl.value || "").trim().replace(/\/$/, "");
+  const anonKey = (els.cloudAnon.value || "").trim();
+  const email = (els.cloudEmail.value || "").trim();
+  const password = els.cloudPassword.value || "";
+  if (!url || !anonKey) throw new Error("请填写 Project URL 和 anon key");
+  if (!email || !password) throw new Error("请填写邮箱和密码");
+  saveCloudConfig({ url, anonKey, email });
+  return { url, anonKey, email, password };
+}
+
+async function connectCloud(mode) {
+  try {
+    const form = readCloudForm();
+    const data =
+      mode === "signup"
+        ? await cloudAuth("/auth/v1/signup", { email: form.email, password: form.password })
+        : await cloudAuth("/auth/v1/token?grant_type=password", {
+            email: form.email,
+            password: form.password,
+          });
+    if (!data.access_token) {
+      throw new Error("注册成功，请到邮箱点确认后再登录。也可在 Authentication 里关掉 Confirm email。");
+    }
+    storeSession(data, { url: form.url, anonKey: form.anonKey, email: form.email });
+    setCloudStatus("正在同步…");
+    await pullFromCloud();
+    if (state.products.length) await pushLocalPhotos();
+    renderLibrary();
+    updateCalc();
+    updateCloudButton();
+    setCloudStatus(`已登录 ${form.email}，商品已同步到云端。`);
+    showToast("云同步已打开");
+    if (els.cloudPassword) els.cloudPassword.value = "";
+  } catch (error) {
+    setCloudStatus(error.message || "连接失败");
+    alert(error.message || "连接失败");
+  }
+}
+
+function disconnectCloud() {
+  const cfg = cloudCfg();
+  saveCloudConfig({
+    url: cfg.url,
+    anonKey: cfg.anonKey,
+    email: cfg.email,
+    accessToken: "",
+    refreshToken: "",
+    userId: "",
+    expiresAt: 0,
+  });
+  updateCloudButton();
+  fillCloudForm();
+  showToast("已断开云同步，本机数据还在");
+}
+
+async function initCloud() {
+  updateCloudButton();
+  fillCloudForm();
+  if (!isCloudLoggedIn()) return;
+  try {
+    setCloudStatus("正在从云端拉取…");
+    await pullFromCloud();
+    renderLibrary();
+    updateCalc();
+    updateCloudButton();
+    setCloudStatus(`已登录 ${cloudCfg().email || ""}，商品已同步。`);
+  } catch (error) {
+    console.warn(error);
+    updateCloudButton();
+    setCloudStatus(error.message || "云同步失败，先用本机数据");
+    if (els.cloudBtn) els.cloudBtn.textContent = "同步失败";
   }
 }
 
@@ -348,7 +777,7 @@ function openPhotoDb() {
   });
 }
 
-async function savePhoto(id, dataUrl) {
+async function savePhotoLocal(id, dataUrl) {
   const db = await openPhotoDb();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(PHOTO_STORE, "readwrite");
@@ -361,22 +790,60 @@ async function savePhoto(id, dataUrl) {
   photoCache.set(id, dataUrl || null);
 }
 
-async function getPhoto(id) {
-  if (photoCache.has(id)) return photoCache.get(id);
+async function getPhotoFromIdb(id) {
   try {
     const db = await openPhotoDb();
-    const dataUrl = await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const tx = db.transaction(PHOTO_STORE, "readonly");
       const request = tx.objectStore(PHOTO_STORE).get(id);
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
     });
-    photoCache.set(id, dataUrl);
-    return dataUrl;
   } catch (error) {
     console.warn("getPhoto", error);
     return null;
   }
+}
+
+async function savePhoto(id, dataUrl) {
+  await savePhotoLocal(id, dataUrl);
+  if (isCloudLoggedIn()) {
+    try {
+      await cloudSavePhoto(id, dataUrl);
+    } catch (error) {
+      console.warn("cloudSavePhoto", error);
+      showToast("照片已保存在本机，云端稍后重试");
+    }
+  }
+}
+
+async function getPhotoLocal(id) {
+  if (photoCache.has(id)) return photoCache.get(id);
+  const dataUrl = await getPhotoFromIdb(id);
+  if (dataUrl) photoCache.set(id, dataUrl);
+  return dataUrl;
+}
+
+async function getPhoto(id) {
+  if (photoCache.has(id)) return photoCache.get(id);
+  const local = await getPhotoFromIdb(id);
+  if (local) {
+    photoCache.set(id, local);
+    return local;
+  }
+  if (isCloudLoggedIn()) {
+    try {
+      await ensureSession();
+      const remote = await cloudGetPhoto(id);
+      photoCache.set(id, remote || null);
+      if (remote) await savePhotoLocal(id, remote);
+      return remote;
+    } catch (error) {
+      console.warn("cloudGetPhoto", error);
+    }
+  }
+  photoCache.set(id, null);
+  return null;
 }
 
 function toNumber(value) {
@@ -646,11 +1113,19 @@ function renderLibrary() {
 async function deleteProduct(product) {
   if (!product || !confirm(`确定删除「${product.name}」？`)) return;
   state.products = state.products.filter((item) => item.id !== product.id);
-  saveState();
+  saveState({ localOnly: true });
   try {
     await savePhoto(product.id, null);
   } catch (error) {
     console.warn("savePhoto", error);
+  }
+  if (isCloudLoggedIn()) {
+    try {
+      await cloudDeleteProduct(product.id);
+    } catch (error) {
+      console.warn("cloudDeleteProduct", error);
+      showToast("云端删除失败，刷新后再试");
+    }
   }
   if (detailProduct?.id === product.id) closeDetail();
   renderLibrary();
@@ -829,9 +1304,10 @@ window.addEventListener("error", showBootError);
 
 try {
   if (els.rate) els.rate.value = state.rate;
-  saveState();
+  saveState({ localOnly: true });
   buildCalc();
   renderLibrary();
+  initCloud();
 } catch (error) {
   console.error(error);
   showBootError();
@@ -846,6 +1322,26 @@ bind(els.rate, "input", () => {
 bind(els.search, "input", renderLibrary);
 bind(els.sort, "change", renderLibrary);
 bind(els.addProduct, "click", () => openModal());
+bind(els.cloudBtn, "click", async () => {
+  fillCloudForm();
+  await fillCloudSql();
+  openDialog(els.cloudModal);
+});
+bind(els.closeCloud, "click", () => closeDialog(els.cloudModal));
+bind(els.copySql, "click", async () => {
+  await fillCloudSql();
+  try {
+    await navigator.clipboard.writeText(els.cloudSql.value);
+    showToast("SQL 已复制");
+  } catch {
+    els.cloudSql.select();
+    showToast("请手动复制 SQL");
+  }
+});
+bind(els.cloudLogin, "click", () => connectCloud("login"));
+bind(els.cloudSignup, "click", () => connectCloud("signup"));
+bind(els.cloudDisconnect, "click", disconnectCloud);
+bind(els.cloudForm, "submit", (event) => event.preventDefault());
 bind(els.addSaleDate, "click", () => {
   const current = [...els.saleDates.querySelectorAll("input[type=month]")].map((input) => {
     if (!input.value) return {};
@@ -928,12 +1424,13 @@ bind(els.form, "submit", async (event) => {
   }
 
   const id = editingId || uid();
+  const now = Date.now();
   if (editingId) {
     state.products = state.products.map((item) =>
-      item.id === editingId ? { ...item, ...draft } : item
+      item.id === editingId ? { ...item, ...draft, updatedAt: now } : item
     );
   } else {
-    state.products.unshift({ id, createdAt: Date.now(), ...draft });
+    state.products.unshift({ id, createdAt: now, updatedAt: now, ...draft });
   }
 
   if (photoDirty || (!editingId && draftPhoto)) {
@@ -945,6 +1442,15 @@ bind(els.form, "submit", async (event) => {
   }
 
   saveState();
+  if (isCloudLoggedIn()) {
+    const saved = state.products.filter((item) => item.id === id)[0];
+    try {
+      await cloudUpsertProducts(saved ? [saved] : []);
+    } catch (error) {
+      console.warn(error);
+      showToast("商品已保存，云端同步失败");
+    }
+  }
   closeModal();
   renderLibrary();
 });

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>进货比价 · 商品一覧</title>
-  <link rel="stylesheet" href="styles.css?v=compact2" />
+  <link rel="stylesheet" href="styles.css?v=supabase1" />
 </head>
 <body>
   <header class="site-header">
@@ -16,6 +16,7 @@
         <input id="rate" type="number" inputmode="decimal" min="0.0001" step="0.0001" />
         元
       </label>
+      <button type="button" class="text-btn cloud-btn" id="cloud-btn">云同步</button>
       <button type="button" class="header-btn" id="add-product">添加</button>
     </div>
   </header>
@@ -159,8 +160,50 @@
   <datalist id="anime-list"></datalist>
   <datalist id="kind-list"></datalist>
 
+  <dialog class="modal" id="cloud-modal">
+    <form id="cloud-form" method="dialog">
+      <header>
+        <h3>云同步 · Supabase</h3>
+        <button type="button" class="icon-btn" id="close-cloud" aria-label="关闭">×</button>
+      </header>
+      <div class="form-body cloud-body">
+        <p class="field-hint" id="cloud-status">未连接。登录后，手机和电脑会共用同一份商品。</p>
+        <p class="field-hint">1. 打开 supabase.com 新建项目<br />2. 把下面 SQL 粘到 SQL Editor 运行<br />3. Authentication → Providers → Email，关掉 Confirm email<br />4. Project Settings → API，复制 URL 和 anon key</p>
+        <label class="full">
+          建表 SQL
+          <textarea id="cloud-sql" readonly rows="8"></textarea>
+          <button type="button" class="text-btn" id="copy-sql">复制 SQL</button>
+        </label>
+        <label class="full">
+          Project URL
+          <input id="cloud-url" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off" />
+        </label>
+        <label class="full">
+          anon public key
+          <input id="cloud-anon" type="text" placeholder="eyJ..." autocomplete="off" />
+        </label>
+        <label>
+          邮箱
+          <input id="cloud-email" type="email" placeholder="两边用同一个邮箱" autocomplete="username" />
+        </label>
+        <label>
+          密码
+          <input id="cloud-password" type="password" placeholder="至少 6 位" autocomplete="current-password" />
+        </label>
+      </div>
+      <footer>
+        <p class="form-tip">anon key 可以公开，真正保护数据的是你的邮箱登录。手机上也要用同一套账号登录一次。</p>
+        <div class="form-actions">
+          <button type="button" class="text-btn" id="cloud-disconnect">断开</button>
+          <button type="button" class="ghost-btn" id="cloud-signup">注册</button>
+          <button type="button" class="header-btn" id="cloud-login">登录并同步</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
   <p class="boot-error" id="boot-error" hidden>页面加载失败，请刷新重试。</p>
   <p class="toast" id="toast" hidden></p>
-  <script src="app.js?v=compact2"></script>
+  <script src="app.js?v=supabase1"></script>
 </body>
 </html>
