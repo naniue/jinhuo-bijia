@@ -38,6 +38,20 @@ const els = {
   toast: document.getElementById("toast"),
   saleDates: document.getElementById("sale-dates"),
   addSaleDate: document.getElementById("add-sale-date"),
+  detailModal: document.getElementById("detail-modal"),
+  detailTitle: document.getElementById("detail-title"),
+  detailCats: document.getElementById("detail-cats"),
+  detailSales: document.getElementById("detail-sales"),
+  detailInterval: document.getElementById("detail-interval"),
+  detailNote: document.getElementById("detail-note"),
+  detailChannels: document.getElementById("detail-channels"),
+  detailPhoto: document.getElementById("detail-photo"),
+  detailPhotoEmpty: document.getElementById("detail-photo-empty"),
+  detailPhotoBtn: document.getElementById("detail-photo-btn"),
+  closeDetail: document.getElementById("close-detail"),
+  detailEdit: document.getElementById("detail-edit"),
+  detailDelete: document.getElementById("detail-delete"),
+  bootError: document.getElementById("boot-error"),
 };
 
 const state = loadState();
@@ -48,13 +62,35 @@ let photoDirty = false;
 let filterAnime = "";
 let filterKind = "";
 const calcCards = {};
+let detailProduct = null;
+
+function uid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function openDialog(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+if (typeof HTMLDialogElement === "undefined" || !HTMLDialogElement.prototype.showModal) {
+  document.documentElement.classList.add("no-dialog");
+}
 
 function defaultState() {
   return {
     rate: 0.048,
     products: [
       {
-        id: crypto.randomUUID(),
+        id: uid(),
         name: "示例：某比例手办",
         note: "可删除，仅用于演示比价",
         anime: "示例作品",
@@ -88,7 +124,11 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn("saveState", error);
+  }
 }
 
 function sortUniqueDates(dates) {
@@ -133,7 +173,7 @@ function formatAverageInterval(dates) {
   const avg = averageSaleInterval(dates);
   if (avg == null) return "";
   const text = Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
-  return `平均间隔 ${text} 个月`;
+  return `再贩间隔 ${text} 个月`;
 }
 
 function parseSaleDatesFromNote(note) {
@@ -244,6 +284,12 @@ function matchesFilter(value, selected) {
   return value === selected;
 }
 
+function latestSaleLabel(dates) {
+  const sorted = sortUniqueDates(dates);
+  if (!sorted.length) return "";
+  return formatSaleDate(sorted[sorted.length - 1]);
+}
+
 function latestSaleValue(product) {
   const dates = product.saleDates || [];
   if (!dates.length) return 0;
@@ -317,15 +363,20 @@ async function savePhoto(id, dataUrl) {
 
 async function getPhoto(id) {
   if (photoCache.has(id)) return photoCache.get(id);
-  const db = await openPhotoDb();
-  const dataUrl = await new Promise((resolve, reject) => {
-    const tx = db.transaction(PHOTO_STORE, "readonly");
-    const request = tx.objectStore(PHOTO_STORE).get(id);
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
-  });
-  photoCache.set(id, dataUrl);
-  return dataUrl;
+  try {
+    const db = await openPhotoDb();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const tx = db.transaction(PHOTO_STORE, "readonly");
+      const request = tx.objectStore(PHOTO_STORE).get(id);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+    photoCache.set(id, dataUrl);
+    return dataUrl;
+  } catch (error) {
+    console.warn("getPhoto", error);
+    return null;
+  }
 }
 
 function toNumber(value) {
@@ -406,9 +457,11 @@ function fillCalcCard(card, channel, quote, bestId) {
 }
 
 function currentCalcProduct() {
-  return Object.fromEntries(
-    CHANNELS.map((channel) => [channel.id, toNumber(calcCards[channel.id]?.input.value)])
-  );
+  const draft = {};
+  CHANNELS.forEach((channel) => {
+    draft[channel.id] = toNumber(calcCards[channel.id]?.input.value);
+  });
+  return draft;
 }
 
 function buildCalc() {
@@ -528,9 +581,10 @@ function renderLibrary() {
   }
 
   products.forEach((product) => {
-    const quotes = quotesFromProduct(product, rate);
-    const best = quotes.find((item) => item.id === bestChannelId(quotes));
+    const quote = bestQuote(product, rate);
+    const shop = quote || CHANNELS.find((channel) => channel.id === "amiami");
     const saleCount = product.saleDates?.length || 0;
+    const latest = latestSaleLabel(product.saleDates);
     const intervalText = formatAverageInterval(product.saleDates);
     const saleTitle = intervalText
       ? `贩卖${saleCount}次，${intervalText}`
@@ -539,76 +593,124 @@ function renderLibrary() {
     card.className = "item";
     card.innerHTML = `
       <div class="item-photo-wrap">
-        <button type="button" class="item-photo" data-photo>
+        <div class="item-photo">
           <img alt="${escapeHtml(product.name)}" hidden />
           <span class="item-photo-empty">NO IMAGE</span>
-        </button>
+        </div>
         ${saleCount ? `<span class="sale-count" title="${escapeHtml(saleTitle)}">${saleCount}</span>` : ""}
       </div>
       <div class="item-body">
         <div class="item-head">
-          <span class="tag${best ? " best" : ""}">${best ? `推荐 ${best.name}` : "未比价"}</span>
           <div class="item-actions">
             <button type="button" class="text-btn" data-edit>编辑</button>
             <button type="button" class="text-btn" data-delete>删除</button>
           </div>
         </div>
         <h3>${escapeHtml(product.name)}</h3>
-        ${[product.anime, product.kind].filter(Boolean).length ? `<p class="item-cats">${escapeHtml([product.anime, product.kind].filter(Boolean).join(" · "))}</p>` : ""}
-        ${product.saleDates?.length ? `<p class="item-sales">${escapeHtml(formatSaleDates(product.saleDates))}${intervalText ? ` · ${intervalText}` : ""}</p>` : ""}
-        ${product.note ? `<p class="item-note">${escapeHtml(product.note)}</p>` : ""}
+        ${latest ? `<p class="item-sales">${escapeHtml(latest)}</p>` : ""}
+        ${intervalText ? `<p class="item-note">${escapeHtml(intervalText)}</p>` : ""}
+        <p class="item-shop">${escapeHtml(shop.name)}</p>
         <p class="item-price">
-          <span class="off">不含运费</span>
-          <span class="cny">${best ? formatCny(best.quote.cny) : "—"}</span>
+          <span class="cny">${quote ? formatCny(quote.quote.cny) : "—"}</span>
         </p>
-        <ul class="item-channels"></ul>
       </div>
     `;
 
-    const list = card.querySelector(".item-channels");
-    quotes.forEach((item) => {
-      const row = document.createElement("li");
-      row.className = `${item.id}${item.quote && item.id === best?.id ? " best" : ""}${item.quote ? "" : " empty"}`;
-      row.innerHTML = `<span>${item.name}</span><span>${item.quote ? formatCny(item.quote.cny) : "—"}</span>`;
-      list.appendChild(row);
-    });
-
-    const photoBtn = card.querySelector("[data-photo]");
-    const img = photoBtn.querySelector("img");
-    const placeholder = photoBtn.querySelector(".item-photo-empty");
+    const photoBox = card.querySelector(".item-photo");
+    const img = photoBox.querySelector("img");
+    const placeholder = photoBox.querySelector(".item-photo-empty");
     getPhoto(product.id).then((dataUrl) => {
-      if (!dataUrl || !photoBtn.isConnected) return;
+      if (!dataUrl || !photoBox.isConnected) return;
       img.src = dataUrl;
       img.hidden = false;
       placeholder.hidden = true;
-      photoBtn.addEventListener("click", () => openLightbox(dataUrl, product.name));
     });
 
-    card.querySelector("[data-edit]").addEventListener("click", () => openModal(product));
-    card.querySelector("[data-delete]").addEventListener("click", async () => {
-      if (!confirm(`确定删除「${product.name}」？`)) return;
-      state.products = state.products.filter((item) => item.id !== product.id);
-      saveState();
-      await savePhoto(product.id, null);
-      renderLibrary();
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("[data-edit], [data-delete]")) return;
+      openDetail(product);
+    });
+    card.querySelector("[data-edit]").addEventListener("click", (event) => {
+      event.stopPropagation();
+      openModal(product);
+    });
+    card.querySelector("[data-delete]").addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await deleteProduct(product);
     });
 
     els.productList.appendChild(card);
   });
 }
 
+async function deleteProduct(product) {
+  if (!product || !confirm(`确定删除「${product.name}」？`)) return;
+  state.products = state.products.filter((item) => item.id !== product.id);
+  saveState();
+  try {
+    await savePhoto(product.id, null);
+  } catch (error) {
+    console.warn("savePhoto", error);
+  }
+  if (detailProduct?.id === product.id) closeDetail();
+  renderLibrary();
+}
+
+async function openDetail(product) {
+  if (!els.detailModal) return;
+  detailProduct = product;
+  const rate = Number(els.rate.value) || 0;
+  const quotes = quotesFromProduct(product, rate);
+  const bestId = bestChannelId(quotes);
+  const cats = [product.anime, product.kind].filter(Boolean).join(" · ");
+  const intervalText = formatAverageInterval(product.saleDates);
+  els.detailTitle.textContent = product.name;
+  els.detailCats.textContent = cats;
+  els.detailCats.hidden = !cats;
+  els.detailSales.textContent = formatSaleDates(product.saleDates);
+  els.detailSales.hidden = !(product.saleDates && product.saleDates.length);
+  els.detailInterval.textContent = intervalText;
+  els.detailInterval.hidden = !intervalText;
+  els.detailNote.textContent = product.note || "";
+  els.detailNote.hidden = !product.note;
+  els.detailChannels.innerHTML = "";
+  quotes.forEach((item) => {
+    const row = document.createElement("li");
+    row.className = `${item.id}${item.quote && item.id === bestId ? " best" : ""}${item.quote ? "" : " empty"}`;
+    row.innerHTML = `<span>${item.name}</span><span>${item.quote ? formatCny(item.quote.cny) : "—"}</span>`;
+    els.detailChannels.appendChild(row);
+  });
+  els.detailPhoto.hidden = true;
+  els.detailPhotoEmpty.hidden = false;
+  els.detailPhoto.removeAttribute("src");
+  const dataUrl = await getPhoto(product.id);
+  if (detailProduct?.id !== product.id) return;
+  if (dataUrl) {
+    els.detailPhoto.src = dataUrl;
+    els.detailPhoto.alt = product.name;
+    els.detailPhoto.hidden = false;
+    els.detailPhotoEmpty.hidden = true;
+  }
+  openDialog(els.detailModal);
+}
+
+function closeDetail() {
+  closeDialog(els.detailModal);
+  detailProduct = null;
+}
+
 function escapeHtml(value) {
   return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function openLightbox(src, name) {
   els.lightboxImage.src = src;
   els.lightboxImage.alt = name;
-  els.lightbox.showModal();
+  openDialog(els.lightbox);
 }
 
 async function openModal(product) {
@@ -634,12 +736,12 @@ async function openModal(product) {
       if (editingId === product.id) showPhotoPreview(existing);
     }
   }
-  els.modal.showModal();
+  openDialog(els.modal);
   els.form.name.focus();
 }
 
 function closeModal() {
-  els.modal.close();
+  closeDialog(els.modal);
   editingId = null;
   photoDirty = false;
   draftPhoto = null;
@@ -648,16 +750,17 @@ function closeModal() {
 
 function readFormProduct() {
   const typed = parseSaleDatesFromNote(els.form.note.value.trim());
-  return {
+  const draft = {
     name: els.form.name.value.trim(),
     anime: els.form.anime.value.trim(),
     kind: els.form.kind.value.trim(),
     note: typed.rest,
     saleDates: sortUniqueDates([...readSaleDates(), ...typed.dates]),
-    ...Object.fromEntries(
-      CHANNELS.map((channel) => [channel.id, toNumber(els.form[channel.id].value)])
-    ),
   };
+  CHANNELS.forEach((channel) => {
+    draft[channel.id] = toNumber(els.form[channel.id].value);
+  });
+  return draft;
 }
 
 function compressImage(file) {
@@ -714,26 +817,36 @@ function fileFromClipboard(clipboardData) {
   return [...(clipboardData?.files || [])].find((file) => file.type.startsWith("image/")) || null;
 }
 
-els.rate.value = state.rate;
-saveState();
-buildCalc();
-renderLibrary();
+function bind(el, type, handler) {
+  if (el) el.addEventListener(type, handler);
+}
 
-els.rate.addEventListener("input", () => {
+function showBootError() {
+  if (els.bootError) els.bootError.hidden = false;
+}
+
+window.addEventListener("error", showBootError);
+
+try {
+  if (els.rate) els.rate.value = state.rate;
+  saveState();
+  buildCalc();
+  renderLibrary();
+} catch (error) {
+  console.error(error);
+  showBootError();
+}
+
+bind(els.rate, "input", () => {
   state.rate = Number(els.rate.value) || 0;
   saveState();
   updateCalc();
   renderLibrary();
 });
-
-els.search.addEventListener("input", () => {
-  renderLibrary();
-});
-els.sort.addEventListener("change", () => {
-  renderLibrary();
-});
-els.addProduct.addEventListener("click", () => openModal());
-els.addSaleDate.addEventListener("click", () => {
+bind(els.search, "input", renderLibrary);
+bind(els.sort, "change", renderLibrary);
+bind(els.addProduct, "click", () => openModal());
+bind(els.addSaleDate, "click", () => {
   const current = [...els.saleDates.querySelectorAll("input[type=month]")].map((input) => {
     if (!input.value) return {};
     const [year, month] = input.value.split("-").map(Number);
@@ -742,35 +855,46 @@ els.addSaleDate.addEventListener("click", () => {
   current.push({});
   renderSaleDateFields(current);
 });
-els.closeModal.addEventListener("click", closeModal);
-els.cancelModal.addEventListener("click", closeModal);
-els.lightbox.addEventListener("click", () => els.lightbox.close());
-
-els.photoInput.addEventListener("change", (event) => {
+bind(els.closeModal, "click", closeModal);
+bind(els.cancelModal, "click", closeModal);
+bind(els.lightbox, "click", () => closeDialog(els.lightbox));
+bind(els.closeDetail, "click", closeDetail);
+bind(els.detailEdit, "click", () => {
+  const product = detailProduct;
+  closeDetail();
+  if (product) openModal(product);
+});
+bind(els.detailDelete, "click", () => deleteProduct(detailProduct));
+bind(els.detailPhotoBtn, "click", () => {
+  if (!els.detailPhoto.hidden && els.detailPhoto.src) {
+    openLightbox(els.detailPhoto.src, detailProduct?.name || "");
+  }
+});
+bind(els.detailModal, "click", (event) => {
+  if (event.target === els.detailModal) closeDetail();
+});
+bind(els.photoInput, "change", (event) => {
   handlePhotoFile(event.target.files[0]);
   event.target.value = "";
 });
-
-els.removePhoto.addEventListener("click", () => {
+bind(els.removePhoto, "click", () => {
   photoDirty = true;
   showPhotoPreview(null);
 });
 
 ["dragenter", "dragover"].forEach((type) => {
-  els.photoPicker.addEventListener(type, (event) => {
+  bind(els.photoPicker, type, (event) => {
     event.preventDefault();
     els.photoPicker.classList.add("is-dragover");
   });
 });
-
 ["dragleave", "drop"].forEach((type) => {
-  els.photoPicker.addEventListener(type, (event) => {
+  bind(els.photoPicker, type, (event) => {
     event.preventDefault();
     els.photoPicker.classList.remove("is-dragover");
   });
 });
-
-els.photoPicker.addEventListener("drop", (event) => {
+bind(els.photoPicker, "drop", (event) => {
   handlePhotoFile(event.dataTransfer.files[0]);
 });
 
@@ -778,11 +902,11 @@ document.addEventListener("paste", async (event) => {
   const file = fileFromClipboard(event.clipboardData);
   if (!file) return;
   event.preventDefault();
-  if (!els.modal.open) await openModal();
+  if (!els.modal?.open) await openModal();
   await handlePhotoFile(file, true);
 });
 
-els.saveCalc.addEventListener("click", () => {
+bind(els.saveCalc, "click", () => {
   const draft = currentCalcProduct();
   if (!bestChannelId(quotesFromProduct(draft, Number(els.rate.value) || 0))) {
     alert("请先至少填写一个渠道的日元价格。");
@@ -791,7 +915,7 @@ els.saveCalc.addEventListener("click", () => {
   openModal({ ...draft, name: "", note: "", saleDates: [], anime: "", kind: "" });
 });
 
-els.form.addEventListener("submit", async (event) => {
+bind(els.form, "submit", async (event) => {
   event.preventDefault();
   const draft = readFormProduct();
   if (!draft.name) {
@@ -803,7 +927,7 @@ els.form.addEventListener("submit", async (event) => {
     return;
   }
 
-  const id = editingId || crypto.randomUUID();
+  const id = editingId || uid();
   if (editingId) {
     state.products = state.products.map((item) =>
       item.id === editingId ? { ...item, ...draft } : item
@@ -813,7 +937,11 @@ els.form.addEventListener("submit", async (event) => {
   }
 
   if (photoDirty || (!editingId && draftPhoto)) {
-    await savePhoto(id, draftPhoto);
+    try {
+      await savePhoto(id, draftPhoto);
+    } catch (error) {
+      console.warn("savePhoto", error);
+    }
   }
 
   saveState();
