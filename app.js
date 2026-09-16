@@ -115,6 +115,27 @@ function formatSaleDates(dates) {
   return dates.map((date, index) => `第${index + 1}次 ${formatSaleDate(date)}`).join(" / ");
 }
 
+function monthIndex(date) {
+  return date.year * 12 + date.month;
+}
+
+function averageSaleInterval(dates) {
+  const sorted = sortUniqueDates(dates);
+  if (sorted.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    total += monthIndex(sorted[i]) - monthIndex(sorted[i - 1]);
+  }
+  return total / (sorted.length - 1);
+}
+
+function formatAverageInterval(dates) {
+  const avg = averageSaleInterval(dates);
+  if (avg == null) return "";
+  const text = Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
+  return `平均间隔 ${text} 个月`;
+}
+
 function parseSaleDatesFromNote(note) {
   const raw = String(note || "").trim();
   if (!raw) return { dates: [], rest: "" };
@@ -510,6 +531,10 @@ function renderLibrary() {
     const quotes = quotesFromProduct(product, rate);
     const best = quotes.find((item) => item.id === bestChannelId(quotes));
     const saleCount = product.saleDates?.length || 0;
+    const intervalText = formatAverageInterval(product.saleDates);
+    const saleTitle = intervalText
+      ? `贩卖${saleCount}次，${intervalText}`
+      : `贩卖${saleCount}次`;
     const card = document.createElement("article");
     card.className = "item";
     card.innerHTML = `
@@ -518,7 +543,7 @@ function renderLibrary() {
           <img alt="${escapeHtml(product.name)}" hidden />
           <span class="item-photo-empty">NO IMAGE</span>
         </button>
-        ${saleCount ? `<span class="sale-count" title="贩卖${saleCount}次">${saleCount}</span>` : ""}
+        ${saleCount ? `<span class="sale-count" title="${escapeHtml(saleTitle)}">${saleCount}</span>` : ""}
       </div>
       <div class="item-body">
         <div class="item-head">
@@ -530,7 +555,7 @@ function renderLibrary() {
         </div>
         <h3>${escapeHtml(product.name)}</h3>
         ${[product.anime, product.kind].filter(Boolean).length ? `<p class="item-cats">${escapeHtml([product.anime, product.kind].filter(Boolean).join(" · "))}</p>` : ""}
-        ${product.saleDates?.length ? `<p class="item-sales">${escapeHtml(formatSaleDates(product.saleDates))}</p>` : ""}
+        ${product.saleDates?.length ? `<p class="item-sales">${escapeHtml(formatSaleDates(product.saleDates))}${intervalText ? ` · ${intervalText}` : ""}</p>` : ""}
         ${product.note ? `<p class="item-note">${escapeHtml(product.note)}</p>` : ""}
         <p class="item-price">
           <span class="off">不含运费</span>
