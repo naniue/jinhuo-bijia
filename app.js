@@ -588,14 +588,30 @@ function monthIndex(date) {
   return date.year * 12 + date.month;
 }
 
+function medianNumber(values) {
+  const sorted = values.slice().sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 function averageSaleInterval(dates) {
   const sorted = sortUniqueDates(dates);
   if (sorted.length < 2) return null;
-  let total = 0;
+  const gaps = [];
   for (let i = 1; i < sorted.length; i += 1) {
-    total += monthIndex(sorted[i]) - monthIndex(sorted[i - 1]);
+    gaps.push(monthIndex(sorted[i]) - monthIndex(sorted[i - 1]));
   }
-  return total / (sorted.length - 1);
+  const kept = gaps.slice().sort((a, b) => a - b);
+  while (kept.length >= 2) {
+    const longest = kept[kept.length - 1];
+    const typical = medianNumber(kept.slice(0, -1));
+    if (longest >= typical * 1.5 && longest - typical >= 6) kept.pop();
+    else break;
+  }
+  const total = kept.reduce((sum, gap) => sum + gap, 0);
+  return total / kept.length;
 }
 
 function formatAverageInterval(dates) {
